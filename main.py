@@ -1172,7 +1172,7 @@ async def main():
                 await create_data_bank()
         print('Start bot')
 
-        # threading.Thread(target=thread, daemon=True).start()
+        threading.Thread(target=thread, daemon=True).start()
         asyncio.create_task(notify())
         await dp.start_polling(bot, skip_updates=True)
 
