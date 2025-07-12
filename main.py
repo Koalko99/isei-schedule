@@ -476,7 +476,7 @@ async def delete(callback: types.CallbackQuery):
                                             )
                                         )
     else:
-        _, ans = callback.data.split("_")
+        _, _, ans = callback.data.split("_")
         if ans == "yes":
             await db.execute("""
                              DELETE FROM students WHERE id = ?
@@ -489,6 +489,11 @@ async def delete(callback: types.CallbackQuery):
             await callback.message.answer(
                 "Ваш аккаунт успешно удалён",
                 reply_markup=types.ReplyKeyboardRemove())
+        else:
+            await callback.message.answer(
+                "Удаление отменено",
+                reply_markup=main_keyboard
+            )
 
 
 @dp.callback_query(F.data.startswith("teacher_"))
@@ -1169,10 +1174,10 @@ async def main():
 
             if not (await cursor.fetchone())[0]:
                 print("Parse data...")
-                await create_data_bank()
+                # await create_data_bank()
         print('Start bot')
 
-        threading.Thread(target=thread, daemon=True).start()
+        # threading.Thread(target=thread, daemon=True).start()
         asyncio.create_task(notify())
         await dp.start_polling(bot, skip_updates=True)
 
