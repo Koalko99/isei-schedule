@@ -504,12 +504,17 @@ async def teacher(callback: types.CallbackQuery):
     key = int(callback.data.split("_")[1])
 
     if not teacher_key:
+        username = ""
+
+        if callback.from_user.username:
+            username = "@"+callback.from_user.username
+
         await db.execute("""
                          INSERT INTO teachers VALUES (?, ?, ?, ?)
                          """,
                          (key,
                           callback.from_user.id,
-                          "@"+callback.from_user.username,
+                          username,
                           None))
         await db.commit()
         await callback.message.delete()
