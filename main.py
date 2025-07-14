@@ -1203,7 +1203,12 @@ async def pre_mess_some_day(mess: types.Message):
                               """,
                               res) as cursor:
 
-            data = loads((await cursor.fetchone())[0])
+            data = await cursor.fetchone()
+
+            if data:
+                data = loads(data[0])
+            else:
+                data = []
 
     else:
 
@@ -1225,7 +1230,12 @@ async def pre_mess_some_day(mess: types.Message):
                               """,
                               (teacher_key, week)) as cursor:
 
-            data = loads((await cursor.fetchone())[0])
+            data = await cursor.fetchone()
+
+            if data:
+                data = loads(data[0])
+            else:
+                data = []
 
     callback_week = ("first_week"
                      if mess.text == "По дню недели"
