@@ -6,12 +6,12 @@ The project combines the ISEI schedule parser and a telegram bot that sends the 
 
 ## 🚀 Features
 
-- 🧠 Asynchronous schedule parser and Telegram bot working in parallel
-- 🧾 Supports both teacher and student accounts
-- 📥 Automatic dumping of schedule from the university website
-- 📆 Navigation by days and weeks with inline keyboards
-- ⚙️ User-friendly interface with profile management
-- 🕓 Always available, even when the official site is down
+- Asynchronous schedule parser and Telegram bot working in parallel
+- Supports both teacher and student accounts
+- Automatic dumping of schedule from the university website
+- Navigation by days and weeks with inline keyboards
+- User-friendly interface with profile management
+- Always available, even when the official site is down
 
 ---
 

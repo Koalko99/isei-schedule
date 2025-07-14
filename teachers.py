@@ -7,6 +7,9 @@ from bs4 import BeautifulSoup as bs
 from random import choice
 from datetime import datetime, timedelta
 from json import dumps
+import logging
+
+logger = logging.getLogger(__name__)
 
 teacher_url = "http://rsp.iseu.by/Raspisanie/TimeTable/umuteachers.aspx"
 
@@ -25,6 +28,18 @@ async def _get_teacher_data(
             "DropDownList1": teacher_id,
             "cbShowDraftForTeacher": "on"
             }
+
+    if not pre["ddlWeek"]:
+        last_monday = (datetime.now() -
+                       timedelta(days=datetime.now().weekday()))
+        pre["ddlWeek"] = last_monday.strftime("%d.%m.%Y 0:00:00")
+
+    def validate(x):
+        if len(x) == 2:
+            if not x[1]:
+                del x[1]
+        return x
+
     for arg in pre:
         html = None
         while not html:
@@ -34,18 +49,20 @@ async def _get_teacher_data(
                     html = await resp.text()
                 soup = bs(html, "html.parser")
                 form = soup.find("body").find("form")
+                if not form:
+                    return
                 for i in form.find_all("input", {"type": "hidden"}):
                     data.update({i["name"]: i["value"]})
-                if not pre["ddlWeek"]:
-                    last_monday = (datetime.now() -
-                                   timedelta(days=datetime.now().weekday()))
-                    pre["ddlWeek"] = last_monday.strftime("%d.%m.%Y 0:00:00")
                 await asyncio.sleep(2)
             except (ServerDisconnectedError,
                     ClientOSError,
                     ServerTimeoutError,
                     TimeoutError):
+
+                logger.error("Connection error")
+                logger.warning("Sleep on 3 sec...")
                 await asyncio.sleep(3)
+
     data.update({"Show": "Показать", "__EVENTTARGET": ""})
     html = None
     while not html:
@@ -55,8 +72,7 @@ async def _get_teacher_data(
             soup = bs(html, "html.parser")
             main_table = soup.find("body").find("table", attrs={"id": "TT"})
             table = [
-                list(filter(None, [ele.text.strip()
-                                   for ele in i.find_all('td')]))
+                validate([ele.text.strip() for ele in i.find_all('td')])
                 for i in main_table.find_all("tr", recursive=False)[3:]
                 if "row-separator" not in i.attrs.get(list(i.attrs)[0], "")
             ]
@@ -65,6 +81,9 @@ async def _get_teacher_data(
                 ClientOSError,
                 ServerTimeoutError,
                 TimeoutError):
+
+            logger.error("Connection error")
+            logger.warning("Sleep on 3 sec...")
             await asyncio.sleep(3)
 
 
@@ -73,8 +92,14 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
     html = None
     tasks = []
     res = []
+
+    if not date:
+        date = (datetime.now() -
+                timedelta(days=datetime.now().weekday())).strftime("%d.%m.%Y")
+
     while not html:
         try:
+            logger.warning("Trying generate pre-data")
             async with session.get(teacher_url) as resp:
                 html = await resp.text()
             soup = bs(html, "html.parser")
@@ -86,6 +111,12 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
                                  " ".join(row.text.split()[:3])})
                 tasks.append((session, row["value"], date))
             shift = 30
+            logger.warning("Parsing teacher schedule...")
+
+            if date not in html:
+                logger.error(f"Schedule for teacher on {date} in not exist")
+                return []
+
             for i in range(0, len(tasks), shift):
                 while True:
                     try:
@@ -97,13 +128,19 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
                         await asyncio.sleep(3)
                         break
                     except Exception:
+                        logger.error("Connection error")
+                        logger.warning("Sleep on 3 sec...")
                         await asyncio.sleep(3)
+            logger.info(f"Succeed parse teacher info on {date}")
             return res
 
         except (ServerDisconnectedError,
                 ClientOSError,
                 ServerTimeoutError,
                 TimeoutError):
+
+            logger.error("Connection error")
+            logger.warning("Sleep on 3 sec...")
             await asyncio.sleep(3)
 
 
@@ -122,15 +159,15 @@ def t_parser(data):
             res += f"{special_key}Расписания на " \
                    f"<code>{row[0].split()[1]}</code> нет"
             continue
-        if len(row) == 3:
-            row.insert(1, "")
-            row.insert(3, "")
-        elif len(row) == 4:
-            row.insert(3, "")
-        elif len(row) == 2:
-            row.insert(1, "")
-            row.insert(2, "")
-            row.insert(3, "")
+        # if len(row) == 3:
+        #     row.insert(1, "")
+        #     row.insert(3, "")
+        # elif len(row) == 4:
+        #     row.insert(3, "")
+        # elif len(row) == 2:
+        #     row.insert(1, "")
+        #     row.insert(2, "")
+        #     row.insert(3, "")
         res += f"\n<b>Время</b> <i><u>{row[0]}</u></i>:\n"
         room = ""
         corp = ""

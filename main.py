@@ -1,5 +1,8 @@
 import aiohttp
+from aiohttp.client_exceptions import ClientOSError, ServerDisconnectedError
+from aiohttp.client_exceptions import ServerTimeoutError
 import asyncio
+from asyncio.exceptions import TimeoutError
 from bs4 import BeautifulSoup as bs
 from time import perf_counter
 from re import findall, compile
@@ -13,10 +16,15 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters.callback_data import CallbackData
 from aiogram.filters import Command
 from aiogram.enums import ParseMode
+import logging
+import sys
+import warnings
 from dotenv import load_dotenv
 from os import getenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 data_bank = {}
 bot = Bot(token=getenv("API_KEY"))
@@ -24,6 +32,17 @@ dp = Dispatcher()
 
 terminate = threading.Event()
 
+COLORS = {
+    'DEBUG':    '\033[36m',
+    'INFO':     '\033[37m',
+    'WARNING':  '\033[33m',
+    'ERROR':    '\033[31m',
+    'CRITICAL': '\033[1;31m'
+}
+RESET = '\033[0m'
+
+log_format = "[%(asctime)s] [%(levelname)-s]: %(message)s"
+date_format = "%Y-%m-%d %H:%M:%S"
 
 main_keyboard = types.ReplyKeyboardMarkup(
                     keyboard=[
@@ -38,9 +57,32 @@ main_keyboard = types.ReplyKeyboardMarkup(
 pattern = compile(rf"({'|'.join(weekdays)})")
 
 
+class ColorFormatter(logging.Formatter):
+    def format(self, record):
+        color = COLORS.get(record.levelname, '')
+        message = super().format(record)
+        return f"{color}{message}{RESET}"
+
+
 class CallbackFactory(CallbackData, prefix="c"):
     action: str
     value: str = None
+
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(ColorFormatter(log_format, datefmt=date_format))
+
+file_handler = logging.FileHandler("schedule.log", encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[console_handler, file_handler]
+)
+
+logger = logging.getLogger(__name__)
 
 
 async def sql_start():
@@ -112,6 +154,8 @@ async def schedule(ID):
     last_sended = ""
 
     teacher_key = await get_teacher_key(ID)
+    str_to_find = ""
+    text_to_send = ""
 
     if not teacher_key:
         res = []
@@ -156,23 +200,25 @@ async def schedule(ID):
                                     res[-1])) as cursor:
             data = await cursor.fetchone()
             data = loads((data)[0])
-            text_to_send = ""
-            if datetime.now().weekday() <= 5:
-                if datetime.now().hour <= 17:
-                    str_to_find = datetime.now().strftime("%d.%m.%Y")
+
+            if data:
+                if datetime.now().weekday() <= 5:
+                    if datetime.now().hour <= 17:
+                        str_to_find = datetime.now().strftime("%d.%m.%Y")
+                    else:
+                        str_to_find = (datetime.now() +
+                                       timedelta(
+                                           days=1
+                                           if datetime.now().weekday() != 5
+                                           else 2)).strftime("%d.%m.%Y")
+
+                    for i in data:
+                        if str_to_find in i:
+                            text_to_send = i
+                    if not text_to_send:
+                        text_to_send = None
                 else:
-                    str_to_find = (datetime.now() +
-                                   timedelta(days=1
-                                             if datetime.now().weekday() != 5
-                                             else 2)).strftime("%d.%m.%Y")
-                text_to_send = ""
-                for i in data:
-                    if str_to_find in i:
-                        text_to_send = i
-                if not text_to_send:
-                    text_to_send = None
-            else:
-                text_to_send = data[0]
+                    text_to_send = data[0]
 
         async with db.execute(
                     """
@@ -183,6 +229,9 @@ async def schedule(ID):
             last_sended = (await cursor.fetchone())[0]
 
         if last_sended != text_to_send and text_to_send:
+
+            logger.info(f"Send {ID} student data on {str_to_find}")
+
             await bot.send_message(ID,
                                    text_to_send,
                                    reply_markup=main_keyboard,
@@ -212,6 +261,7 @@ async def schedule(ID):
                         (teacher_key, week)
                     ) as cursor:
             info = loads((await cursor.fetchone())[0])
+
         async with db.execute("""
                               SELECT sended
                               FROM teachers
@@ -221,24 +271,31 @@ async def schedule(ID):
 
             last_sended = (await cursor.fetchone())[0]
 
-        if datetime.now().weekday() <= 5:
-            if datetime.now().hour <= 17:
-                str_to_find = datetime.now().strftime("%d.%m.%Y")
+        if info:
+            if datetime.now().weekday() <= 5:
+                if datetime.now().hour <= 17:
+                    str_to_find = datetime.now().strftime("%d.%m.%Y")
+                else:
+                    str_to_find = (datetime.now() +
+                                   timedelta(
+                                       days=1
+                                       if datetime.now().weekday() != 5
+                                       else 2)).strftime("%d.%m.%Y")
+
+                for i in info:
+                    if str_to_find in i:
+                        text_to_send = i
+                if not text_to_send:
+                    text_to_send = None
             else:
-                str_to_find = (datetime.now() +
-                               timedelta(days=1
-                                         if datetime.now().weekday() != 5
-                                         else 2)).strftime("%d.%m.%Y")
-            text_to_send = ""
-            for i in info:
-                if str_to_find in i:
-                    text_to_send = i
-            if not text_to_send:
+                text_to_send = info[0]
+
+            if "</code> нет" in text_to_send:
                 text_to_send = None
-        else:
-            text_to_send = data[0]
 
         if last_sended != text_to_send and text_to_send:
+
+            logger.info(f"Send {ID} student data on {str_to_find}")
 
             await bot.send_message(ID,
                                    text_to_send,
@@ -257,15 +314,33 @@ async def create_data_bank():
     global data_bank
     _tfac = []
     start = perf_counter()
+
+    logger.info("Create session")
+
     async with aiohttp.ClientSession(
                             connector=aiohttp.TCPConnector(limit=300)
                             ) as session:
 
-        async with session.get(url) as resp:
-            soup = bs(await resp.text(), "html.parser")
-            ddl_fac = soup.find("select", attrs={"name": "ddlFac"})
-            for _fac in ddl_fac.find_all("option"):
-                _tfac.append(_fac.text.strip())
+        while True:
+            try:
+                async with session.get(url,
+                                       timeout=aiohttp.ClientTimeout(
+                                            total=5)) as resp:
+                    soup = bs(await resp.text(), "html.parser")
+                    ddl_fac = soup.find("select", attrs={"name": "ddlFac"})
+                    for _fac in ddl_fac.find_all("option"):
+                        _tfac.append(_fac.text.strip())
+                    break
+
+            except (ServerDisconnectedError,
+                    ClientOSError,
+                    ServerTimeoutError,
+                    TimeoutError):
+
+                logger.error("Site is down")
+                await asyncio.sleep(2)
+
+        logger.warning("Create requests for parsing student schedule...")
 
         requests = sum(
                     sum(
@@ -279,6 +354,8 @@ async def create_data_bank():
                     []
                     )
 
+        logger.warning("Get student schedule...")
+
         result = list(
                     filter(None,
                            await asyncio.gather(
@@ -286,23 +363,44 @@ async def create_data_bank():
                                 ))
                     )
 
-        teacher_data = list(map(t_parser, await pre_data(session)))
+        logger.info("Succeed collect student schedule")
+
+        logger.warning("Getting teacher schedule...")
+
+        teacher_data = list(
+                        map(
+                            t_parser,
+                            filter(
+                                None,
+                                await pre_data(session)
+                                )
+                            )
+                        )
+
         teacher_data.extend(
             list(
                 map(
                     t_parser,
-                    await pre_data(
-                        session,
-                        (datetime.now() +
-                         timedelta(days=7 -
-                                   datetime.now().weekday()
-                                   )).strftime("%d.%m.%Y")
+                    filter(
+                        None,
+                        await pre_data(
+                            session,
+                            (
+                                datetime.now() + timedelta(
+                                    days=7 - datetime.now().weekday()
                                 )
+                            ).strftime("%d.%m.%Y")
+                        )
                     )
                 )
             )
+        )
 
+        logger.info("Succeed collect teacher schedule")
         end = perf_counter()
+
+        logger.info("Update data in database")
+
         await db.execute("""
                          DELETE FROM s_info
                          """)
@@ -321,21 +419,25 @@ async def create_data_bank():
                             INSERT INTO t_info VALUES (?, ?, ?, ?)
                             """, row) for row in teacher_data])
         await db.commit()
-        print(f"Total time: {end-start:.2f} sec")
-        print(f'Data updated {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}')
+        logger.info(f"Total time: {end-start:.2f} sec")
+        logger.info("Data updated")
 
 
 @dp.message(Command("start"))
 async def start(mess: types.Message):
-    async with db.execute("""
-                          SELECT faculty,
-                                 learn_type,
-                                 course,
-                                 user_group,
-                                 subgroup
 
-                          FROM students WHERE id = ?""",
-                          (mess.from_user.id,)) as cursor:
+    logger.info(f"ID {mess.from_user.id} start talking")
+
+    async with db.execute("""
+                          SELECT 1
+                          FROM students
+                          WHERE id = ?
+                          AND EXISTS (
+                              SELECT 1 FROM teachers WHERE tg_id = ?
+                          )
+                          """,
+                          (mess.from_user.id,
+                           mess.from_user.id)) as cursor:
 
         res = await cursor.fetchone()
         if res:
@@ -359,6 +461,8 @@ async def start(mess: types.Message):
 async def signup(callback: types.CallbackQuery):
     await callback.answer()
 
+    logger.warning(f"ID {callback.from_user.id} trying to registered")
+
     await db.execute("""
                      DELETE FROM students WHERE id = ?
                      """,
@@ -369,19 +473,34 @@ async def signup(callback: types.CallbackQuery):
                      (callback.from_user.id,))
     await db.commit()
 
-    await callback.message.edit_text(
+    await callback.message.delete()
+
+    _msg = await callback.message.answer(
+        "Минуту...",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
+    await _msg.delete()
+
+    await callback.message.answer(
         "Вы студент или преподаватель?",
         reply_markup=types.InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [types.InlineKeyboardButton(text="Студент",
-                                                callback_data=CallbackFactory(
-                                                    action="student",
-                                                    value="1"
-                                                ).pack()),
-                     types.InlineKeyboardButton(text="Преподаватель",
-                                                callback_data="page_0")]
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="Студент",
+                        callback_data=CallbackFactory(
+                            action="student",
+                            value="1"
+                        ).pack()
+                    ),
+                    types.InlineKeyboardButton(
+                        text="Преподаватель",
+                        callback_data="page_0"
+                    )
                 ]
-            )
+            ]
+        )
     )
 
 
@@ -448,7 +567,10 @@ async def get_teacher_keybord(page: int):
 @dp.callback_query(F.data.startswith("page_"))
 async def page(callback: types.CallbackQuery):
     await callback.answer()
+
     p = int(callback.data.split("_")[1])
+
+    logger.warning(f"ID {callback.from_user.id} open page {p+1}")
 
     keyboard = await get_teacher_keybord(p)
 
@@ -456,10 +578,14 @@ async def page(callback: types.CallbackQuery):
                                      reply_markup=keyboard)
 
 
-@dp.callback_query(F.data.startswith("delete_"))
+@dp.callback_query(F.data.startswith("delete"))
 async def delete(callback: types.CallbackQuery):
     await callback.answer()
-    if len(callback.data.split("_")) == 2:
+
+    if len(callback.data.split("_")) == 1:
+
+        logger.warning(F"ID {callback.from_user.id} trying to delete account")
+
         await callback.message.edit_text(
             "Вы точно хотите "
             "удалить свой аккаунт?",
@@ -467,17 +593,20 @@ async def delete(callback: types.CallbackQuery):
                                 inline_keyboard=[[
                                     types.InlineKeyboardButton(
                                         text="Да",
-                                        callback_data=f"{callback.data}_yes"),
+                                        callback_data="delete_yes"),
 
                                     types.InlineKeyboardButton(
                                         text="Нет",
-                                        callback_data=f"{callback.data}_no")
+                                        callback_data="delete_no")
                                                 ]]
                                             )
                                         )
     else:
-        _, _, ans = callback.data.split("_")
+        _, ans = callback.data.split("_")
         if ans == "yes":
+
+            logger.error(f"ID {callback.from_user.id} delete account")
+
             await db.execute("""
                              DELETE FROM students WHERE id = ?
                              """, (callback.from_user.id,))
@@ -490,6 +619,10 @@ async def delete(callback: types.CallbackQuery):
                 "Ваш аккаунт успешно удалён",
                 reply_markup=types.ReplyKeyboardRemove())
         else:
+
+            logger.info(f"ID {callback.from_user.id} "
+                        "canceled account deletion")
+
             await callback.message.answer(
                 "Удаление отменено",
                 reply_markup=main_keyboard
@@ -499,41 +632,31 @@ async def delete(callback: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("teacher_"))
 async def teacher(callback: types.CallbackQuery):
     await callback.answer()
-    teacher_key = await get_teacher_key(callback.from_user.id)
 
     key = int(callback.data.split("_")[1])
 
-    if not teacher_key:
-        username = ""
-
-        if callback.from_user.username:
-            username = "@"+callback.from_user.username
-
-        await db.execute("""
-                         INSERT INTO teachers VALUES (?, ?, ?, ?)
-                         """,
-                         (key,
-                          callback.from_user.id,
-                          username,
-                          None))
-        await db.commit()
-        await callback.message.delete()
-
-        await callback.message.answer("Теперь Вам будет автоматически "
-                                      "приходить Ваше расписание",
-                                      reply_markup=main_keyboard)
+    username = None
+    if callback.from_user.username:
+        username = "@"+callback.from_user.username
+    await db.execute("""
+                     INSERT INTO teachers VALUES (?, ?, ?, ?)
+                     """,
+                     (key,
+                      callback.from_user.id,
+                      username,
+                      None))
+    await db.commit()
+    await callback.message.delete()
+    await callback.message.answer("Теперь Вам будет автоматически "
+                                  "приходить Ваше расписание",
+                                  reply_markup=main_keyboard)
+    if callback.from_user.username:
+        logger.info(f"ID {callback.from_user.id}"
+                    f"(@{callback.from_user.username}) "
+                    f"registered as teacher({key})")
     else:
-        await db.execute("""
-                         UPDATE teachers
-                         SET `id` = ?
-                         WHERE `tg_id` = ?
-                         """,
-                         (key, callback.from_user.id))
-        await db.commit()
-
-        await callback.message.delete()
-        await callback.message.answer("Ваши данные обнавлены",
-                                      reply_markup=main_keyboard)
+        logger.info(f"ID {callback.from_user.id} "
+                    f"registered as teacher({key})")
 
 
 @dp.callback_query(CallbackFactory.filter(F.action.contains("student")))
@@ -541,27 +664,6 @@ async def student(callback: types.CallbackQuery,
                   callback_data: CallbackFactory):
 
     await callback.answer()
-
-    async with db.execute("""
-                          SELECT faculty,
-                                 learn_type,
-                                 course,
-                                 user_group,
-                                 subgroup
-
-                          FROM students WHERE id = ?
-                          """,
-                          (callback.from_user.id,)) as cursor:
-
-        _pre_data = await cursor.fetchone()
-        if _pre_data:
-            if len(list(filter(None, _pre_data))) >= 5:
-                await db.execute("""
-                                 DELETE FROM students
-                                 WHERE id = ?
-                                 """,
-                                 (callback.from_user.id,))
-                await db.commit()
 
     if callback_data.action == "student":
         async with db.execute("""
@@ -599,12 +701,16 @@ async def student(callback: types.CallbackQuery,
 
             fac = sum(await cursor.fetchall(), ())[int(callback_data.value)]
 
+        username = None
+        if callback.from_user.username:
+            username = "@"+callback.from_user.username
+
         await db.execute("""
                          INSERT INTO students
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                          """,
                          (callback.from_user.id,
-                          f"@{callback.from_user.username}"
+                          username
                           if callback.from_user.username else None,
                           fac, None, None, None, None, None))
         await db.commit()
@@ -637,20 +743,22 @@ async def student(callback: types.CallbackQuery,
         await db.commit()
 
         async with db.execute("""
-                              SELECT faculty,
-                                     learn_type
-                              FROM students
-                              WHERE `id` = ?""",
-                              (callback.from_user.id,)) as cursor:
-            faculty, learn_type = await cursor.fetchone()
-
-        async with db.execute("""
                               SELECT DISTINCT course
                               FROM s_info
-                              WHERE `faculty` = ?
-                              AND `learn_type` = ?
+                              WHERE faculty = (
+                                    SELECT faculty
+                                    FROM students
+                                    WHERE id = ?
+                                )
+                              AND learn_type = (
+                                    SELECT learn_type
+                                    FROM students
+                                    WHERE id = ?
+                                )
                               """,
-                              (faculty, learn_type)) as cursor:
+                              (callback.from_user.id,
+                               callback.from_user.id)) as cursor:
+
             await callback.message.edit_text(
                 "Замечательно, теперь выбери свой курс",
                 reply_markup=types.InlineKeyboardMarkup(
@@ -673,22 +781,24 @@ async def student(callback: types.CallbackQuery,
         await db.commit()
 
         async with db.execute("""
-                              SELECT faculty,
-                                     course,
-                                     learn_type
-                              FROM students
-                              WHERE `id` = ?""",
-                              (callback.from_user.id,)) as cursor:
-            res = await cursor.fetchone()
-
-        async with db.execute("""
                               SELECT DISTINCT u_group
                               FROM s_info
-                              WHERE `faculty` = ?
-                              AND `course` = ?
-                              AND `learn_type` = ?
-                              """,
-                              res) as cursor:
+                              WHERE faculty = (
+                                    SELECT faculty
+                                    FROM students
+                                    WHERE id = ?)
+                              AND course  = (
+                                    SELECT course
+                                    FROM students
+                                    WHERE id = ?)
+                              AND learn_type = (
+                                    SELECT learn_type
+                                    FROM students
+                                    WHERE id = ?)
+                              """, (
+                                    callback.from_user.id,
+                                    callback.from_user.id,
+                                    callback.from_user.id)) as cursor:
             await callback.message.edit_text(
                 "Хорошо, теперь выбери свою группу",
                 reply_markup=types.InlineKeyboardMarkup(
@@ -739,6 +849,14 @@ async def student(callback: types.CallbackQuery,
                          (callback_data.value, callback.from_user.id))
         await db.commit()
 
+        if callback.from_user.username:
+            logger.info(f"ID {callback.from_user.id}"
+                        f"(@{callback.from_user.username}) "
+                        f"registered as student")
+        else:
+            logger.info(f"ID {callback.from_user.id} "
+                        f"registered as student")
+
         await callback.message.delete()
         await callback.message.answer("Теперь тебе будет "
                                       "автоматически отправляться "
@@ -748,6 +866,9 @@ async def student(callback: types.CallbackQuery,
 
 @dp.message(F.text == "Профиль")
 async def profile(mess: types.Message):
+
+    logger.warning(f"ID {mess.from_user.id} view profile")
+
     teacher_key = await get_teacher_key(mess.from_user.id)
     if not teacher_key:
         async with db.execute("""
@@ -785,7 +906,7 @@ async def profile(mess: types.Message):
                         callback_data="signup"),
                      types.InlineKeyboardButton(
                         text="Удалить",
-                        callback_data=f"delete_{mess.from_user.id}")]
+                        callback_data="delete")]
                 ])
             )
     else:
@@ -810,7 +931,7 @@ async def profile(mess: types.Message):
                             callback_data="signup"),
                         types.InlineKeyboardButton(
                             text="Удалить",
-                            callback_data=f"delete_{mess.from_user.id}")
+                            callback_data="delete")
                     ]
                 ]
             )
@@ -820,6 +941,8 @@ async def profile(mess: types.Message):
 @dp.message(F.text == "Сегодня")
 async def today(mess: types.Message):
     teacher_key = await get_teacher_key(mess.from_user.id)
+
+    logger.info(f"ID {mess.from_user.id} looks at the schedule for today")
 
     week = (datetime.now() -
             timedelta(days=datetime.now().weekday())
@@ -884,6 +1007,8 @@ async def today(mess: types.Message):
 @dp.message(F.text == "Завтра")
 async def next_day(mess: types.Message):
     teacher_key = await get_teacher_key(mess.from_user.id)
+
+    logger.info(f"ID {mess.from_user.id} looks at the schedule for next day")
 
     if datetime.now().weekday() != 6:
         week = (datetime.now() -
@@ -957,6 +1082,9 @@ async def next_day(mess: types.Message):
 async def some_day(callback: types.CallbackQuery):
     await callback.answer()
     teacher_key = await get_teacher_key(callback.from_user.id)
+
+    logger.info(f"ID {callback.from_user.id} looks at "
+                f"the schedule for some day")
 
     week = ""
 
@@ -1144,9 +1272,19 @@ async def parse_data():
 async def notify():
     counter = 0
     while not terminate.is_set():
-        async with db.execute("""SELECT id FROM students""") as cursor:
+        logger.info("Sending scheduled data...")
+        async with db.execute("""
+                              SELECT id
+                              AS user_id
+                              FROM students
+                              UNION ALL
+                              SELECT tg_id
+                              AS user_id
+                              FROM teachers
+                              """) as cursor:
             tasks = [schedule(i) for i in sum(await cursor.fetchall(), ())]
         await asyncio.gather(*tasks)
+        logger.info("End of sending")
         while not terminate.is_set() and counter < 300:
             await asyncio.sleep(1)
             counter += 1
@@ -1156,49 +1294,80 @@ async def notify():
 def thread():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(parse_data())
-    if terminate.is_set():
-        pending = asyncio.all_tasks(loop)
-        for p in pending:
-            p.cancel()
-        loop.run_until_complete(loop.shutdown_asyncgens())
+
+    async def runner():
+        try:
+            await parse_data()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await loop.shutdown_asyncgens()
+            loop.stop()
+
+    loop.create_task(runner())
+    try:
+        loop.run_forever()
+    finally:
+        loop.close()
 
 
 async def main():
-
     try:
         await sql_start()
         async with db.execute("""
                               SELECT
                                 (SELECT COUNT(*)
-                                FROM s_info) +
+                                    FROM s_info) +
                                 (SELECT COUNT(*)
-                                FROM t_info)
+                                    FROM t_info)
                               AS total_count
                               """) as cursor:
 
             if not (await cursor.fetchone())[0]:
-                print("Parse data...")
+                logger.info("Parse data...")
                 await create_data_bank()
-        print('Start bot')
+        logger.info('Start bot')
 
         threading.Thread(target=thread, daemon=True).start()
         asyncio.create_task(notify())
         await dp.start_polling(bot, skip_updates=True)
 
     except KeyboardInterrupt:
-        for p in asyncio.all_tasks(asyncio.get_running_loop()):
-            if p is not asyncio.current_task():
-                p.cancel()
+        terminate.set()
+        loop = asyncio.get_running_loop()
+        tasks = [t for t in asyncio.all_tasks(loop)
+                 if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
         await dp.stop_polling()
-        print("Goodbye")
+        logger.info("Bot stopped")
 
     finally:
         if db:
             await db.close()
-            print("Database closed")
+            logger.info("Database closed")
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Goodbye")
+
+    if sys.platform.startswith("win"):
+        import asyncio.proactor_events
+        warnings.filterwarnings("ignore",
+                                category=ResourceWarning,
+                                module="asyncio")
+
+        old_del = asyncio.proactor_events._ProactorBasePipeTransport.__del__
+
+        def safe_del(self):
+            try:
+                old_del(self)
+            except RuntimeError as e:
+                if str(e) != "Event loop is closed":
+                    raise
+
+        asyncio.proactor_events._ProactorBasePipeTransport.__del__ = safe_del

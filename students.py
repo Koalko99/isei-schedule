@@ -8,7 +8,9 @@ from aiohttp.client_exceptions import ClientOSError, ServerDisconnectedError
 from aiohttp.client_exceptions import ServerTimeoutError
 from asyncio.exceptions import TimeoutError
 import asyncio
+import logging
 
+logger = logging.getLogger(__name__)
 
 url = "http://rsp.iseu.by/Raspisanie/TimeTable/umu.aspx"
 
@@ -70,6 +72,10 @@ def parse(html: str, group: str, subgroup, parse_type):
             for i in set(findall(r"\d+п/гр", result)):
                 result = result.replace(i, f" {i}")
         result = result.strip(special_key).split(special_key)
+
+        for r in [result.index(k) for k in result if "Время" not in k]:
+            del result[r]
+
         _tmp = []
         for i in [i.strip("\n") for i in result]:
             text = i
@@ -84,7 +90,7 @@ def parse(html: str, group: str, subgroup, parse_type):
         if parse_type == "full":
             return result
         elif isinstance(parse_type, datetime):
-            date = datetime.strftime(parse_type, "%d.%m.%Y")
+            date = parse_type.strftime("%d.%m.%Y")
             for i in result:
                 if date in i:
                     return i
@@ -105,182 +111,88 @@ async def get_data(session: aiohttp.ClientSession,
                    group: str,
                    subgroup,
                    view_type: str = "full"):
-    data = {
-        "__EVENTTARGET": "",
-        "__EVENTARGUMENT": "",
-        "__LASTFOCUS": "",
-        "__VIEWSTATE": "",
-        "__VIEWSTATEGENERATOR": "",
-        "__EVENTVALIDATION": "",
+    data = {}
+
+    pre = {
+        "": "",
         "ddlFac": "",
         "ddlDep": "",
         "ddlCourse": "",
         "ddlGroup": "",
-        "ddlWeek": ""
+        "ddlWeek": "",
     }
-    pre_load = ""
-    while True:
-        dt = {}
-        try:
-            async with session.get(url) as resp:
-                _s = bs(await resp.text(), "html.parser")
-                fac = _s.find("select", attrs={"id": "ddlFac"})
-                for i in fac.find_all("option"):
-                    if i.text.strip() == faculty:
-                        dt.update({"ddlFac": i["value"]})
-                        break
-                dep = _s.find("select", attrs={"id": "ddlDep"})
-                for i in dep.find_all("option"):
-                    if i.text.strip() == learn_type:
-                        dt.update({"ddlDep": i["value"]})
-                        break
-                viewstate = _s.find("input",
-                                    attrs={"type": "hidden",
-                                           "name": "__VIEWSTATE"}
-                                    ).get("value")
-                eventvalidation = _s.find("input",
-                                          attrs={
-                                            "type": "hidden",
-                                            "name": "__EVENTVALIDATION"
-                                            }).get("value")
 
-                dt.update({
-                    '__VIEWSTATE': viewstate,
-                    '__EVENTVALIDATION': eventvalidation,
-                    '__EVENTTARGET': 'ddlCourse'
-                })
-                data = dt
-                break
-        except (ServerDisconnectedError,
-                ClientOSError,
-                ServerTimeoutError,
-                TimeoutError):
-            await asyncio.sleep(2)
-    while True:
+    tmp = {
+        "ddlFac": faculty,
+        "ddlDep": learn_type,
+        "ddlCourse": f"{course} курс",
+        "ddlGroup": group,
+        "ddlWeek":
+            (
+                datetime.now() - timedelta(days=datetime.now().weekday())
+            ).strftime("%d.%m.%Y")
+            if not view_type or not isinstance(view_type, datetime)
+            else view_type.strftime("%d.%m.%Y")
+    }
+
+    for arg in pre:
+        html = None
+        while not html:
+            try:
+                async with session.post(url, data=data) as resp:
+                    html = await resp.text()
+                soup = bs(html, "html.parser")
+                form = soup.find("body").find("form")
+
+                if not form:
+                    return
+
+                for i in form.find_all(
+                                "input",
+                                {"type": "hidden"}
+                                ):
+                    data.update({i["name"]: i["value"]})
+
+                if arg:
+                    key = ""
+                    data.update({"__EVENTTARGET": arg, arg: pre[arg]})
+                    for k in form.find(
+                                    "select",
+                                    {"name": arg}
+                                ).find_all("option"):
+                        if k.text.strip() == tmp[arg]:
+                            key = k["value"]
+                            break
+                    else:
+                        return
+                    data[arg] = key
+
+            except (
+                    ServerDisconnectedError,
+                    ClientOSError,
+                    ServerTimeoutError,
+                    TimeoutError
+                    ):
+                await asyncio.sleep(2)
+
+    data.update({"ShowTT": "Показать", "iframeheight": "400"})
+
+    html = ""
+
+    if not data["ddlWeek"]:
+        return
+
+    while not html:
         try:
             async with session.post(url, data=data) as resp:
                 html = await resp.text()
-                _s = bs(html, "html.parser")
-                for i in _s.find("select",
-                                 attrs={"id": "ddlCourse"}).find_all("option"):
-                    if int(i.text.split()[0]) == course:
-                        data.update({"ddlCourse": i["value"]})
-                        break
-                data.update({
-                            '__VIEWSTATE': _s.find(
-                                "input",
-                                attrs={"type": "hidden", "name": "__VIEWSTATE"}
-                            ).get("value"),
-                            '__EVENTVALIDATION': _s.find(
-                                "input",
-                                attrs={"type": "hidden",
-                                       "name": "__EVENTVALIDATION"}
-                            ).get("value"),
-                            '__EVENTTARGET': 'ddlGroup'})
-                break
-        except (ServerDisconnectedError,
+        except (
+                ServerDisconnectedError,
                 ClientOSError,
                 ServerTimeoutError,
-                TimeoutError):
+                TimeoutError
+                ):
             await asyncio.sleep(2)
-    while True:
-        try:
-            async with session.post(url, data=data) as resp:
-                pre_load = bs(await resp.text(), "html.parser")
-                break
-        except (ServerDisconnectedError,
-                ClientOSError,
-                ServerTimeoutError,
-                TimeoutError):
-            await asyncio.sleep(2)
-    data.update({"ShowTT": "Показать", "iframeheight": "400"})
-    form = pre_load.find("body").find("form", attrs={"method": "post"})
-    for input_block in form.find_all("input"):
-        data.update({input_block.get("name"): input_block.get("value")})
-        filtr = form.find("div", attrs={"class": "filter"})
-    for faclt_data in filtr.find_all("div", recursive=False):
-        for fdata in faclt_data.find_all("select"):
-            method = fdata.get("name")
-            temp = {option.text.strip(): option.get("value")
-                    for option in fdata.find_all("option", recursive=False)}
-            try:
-                if method == "ddlFac":
-                    data.update({method: temp[faculty]})
-                elif method == "ddlDep":
-                    data.update({method: temp[learn_type.lower()]})
-                elif method == "ddlCourse":
-                    data.update({method: temp[f"{course} курс"]})
-                elif method == "ddlGroup":
-                    try:
-                        data.update({method: temp[group.upper()]})
-                    except Exception:
-                        html = ""
-                        while not html:
-                            post_data = {
-                                '__VIEWSTATE': data['__VIEWSTATE'],
-                                '__EVENTVALIDATION': data['__EVENTVALIDATION'],
-                                '__EVENTTARGET': 'ddlGroup',
-                                '__EVENTARGUMENT': '',
-                                'ddlCourse': str(course)
-                            }
-                            try:
-                                async with session.post(url,
-                                                        data=post_data) \
-                                                        as resp:
-                                    html = await resp.text()
-                            except (ServerDisconnectedError,
-                                    ClientOSError,
-                                    ServerTimeoutError,
-                                    TimeoutError):
-                                await asyncio.sleep(2)
-                        pre_load = bs(html, "html.parser")
-                        slct = pre_load.find("select",
-                                             attrs={"name": "ddlGroup"})
-                        for i in slct.find_all("option"):
-                            if i.text == group:
-                                viewstate = pre_load.find('input',
-                                                          {'id': '__VIEWSTATE'
-                                                           })['value']
-                                ev = pre_load.find('input',
-                                                   {'id': '__EVENTVALIDATION'
-                                                    })['value']
-
-                                data.update({
-                                    method: i.get("value"),
-                                    '__VIEWSTATE': viewstate,
-                                    '__EVENTVALIDATION': ev
-                                })
-                                break
-                elif method == "ddlWeek":
-                    if not isinstance(view_type, datetime):
-                        if datetime.strftime(
-                                        datetime.now(), "%d.%m.%Y") in temp:
-                            data.update({method:
-                                         datetime.now().strftime(
-                                             "%d.%m.%Y 0:00:00")})
-                        else:
-                            if (datetime.now().weekday() >= 5
-                                    and datetime.now().hour >= 15):
-                                next_week = (datetime.now() +
-                                             timedelta(days=7 -
-                                                       datetime.now().weekday()
-                                                       ))
-                                monday = (datetime.now() -
-                                          timedelta(
-                                              days=datetime.now().weekday()))
-                                data.update({"ddlWeek":
-                                             temp[next_week.strftime(
-                                                 "%d.%m.%Y")]})
-                            else:
-                                data.update({"ddlWeek":
-                                             temp[monday.strftime(
-                                                                "%d.%m.%Y")]})
-                    else:
-                        data.update({method: view_type.strftime(
-                                                        "%d.%m.%Y 0:00:00")})
-                        view_type = "full"
-            except Exception:
-                return
 
     if view_type == "next" or view_type == "now":
         if view_type == "now":
@@ -289,17 +201,6 @@ async def get_data(session: aiohttp.ClientSession,
             view_type = datetime.now() + timedelta(days=1)
         if datetime.now().hour >= 15 and datetime.now().weekday() != 5:
             view_type += timedelta(days=1)
-
-    html = ""
-    while not html:
-        try:
-            async with session.post(url, data=data) as resp:
-                html = await resp.text()
-        except (ServerDisconnectedError,
-                ClientOSError,
-                ServerTimeoutError,
-                TimeoutError):
-            await asyncio.sleep(2)
 
     res = parse(html, group, subgroup, view_type)
 
@@ -347,7 +248,11 @@ async def generate_group_data(session: aiohttp.ClientSession,
                     ClientOSError,
                     ServerTimeoutError,
                     TimeoutError):
+
+                logger.error("Connection error")
+                logger.warning("Sleep on 2 sec...")
                 await asyncio.sleep(2)
+
         while True:
             try:
                 async with session.post(url, data=dt) as resp:
@@ -376,7 +281,11 @@ async def generate_group_data(session: aiohttp.ClientSession,
                     ClientOSError,
                     ServerTimeoutError,
                     TimeoutError):
+
+                logger.error("Connection error")
+                logger.warning("Sleep on 2 sec...")
                 await asyncio.sleep(2)
+
         while True:
             try:
                 async with session.post(url, data=dt) as resp:
@@ -386,7 +295,11 @@ async def generate_group_data(session: aiohttp.ClientSession,
                     ClientOSError,
                     ServerTimeoutError,
                     TimeoutError):
+
+                logger.error("Connection error")
+                logger.warning("Sleep on 2 sec...")
                 await asyncio.sleep(2)
+
         fac = soup.find("select",
                         attrs={
                             "id": "ddlFac"
@@ -400,6 +313,7 @@ async def generate_group_data(session: aiohttp.ClientSession,
                                       attrs={"selected": "selected"
                                              }).text.strip()
         cs = int(cs)
+
         return [[(session, fac, lt, cs, i.text, j,
                   datetime.now()-timedelta(days=datetime.now().weekday())),
                  (session, fac, lt, cs, i.text, j,
@@ -415,6 +329,9 @@ async def create_requests(session: aiohttp.ClientSession, fac: str):
     pld = {}
     tasks = []
     learn_types = ["2", "3"]
+
+    logger.info("Trying create request...")
+
     while True:
         try:
             async with session.get(url) as resp:
@@ -436,10 +353,14 @@ async def create_requests(session: aiohttp.ClientSession, fac: str):
                     pld.update({"ddlFac": i["value"]})
                     break
             break
+
         except (ServerDisconnectedError,
                 ClientOSError,
                 ServerTimeoutError,
                 TimeoutError):
+
+            logger.error("Connection error")
+            logger.warning("Sleep on 2 sec...")
             await asyncio.sleep(2)
 
     while learn_types:
@@ -456,9 +377,17 @@ async def create_requests(session: aiohttp.ClientSession, fac: str):
                                                      learn_types[0],
                                                      i["value"]))
             del learn_types[0]
+
         except (ServerDisconnectedError,
                 ClientOSError,
                 ServerTimeoutError,
                 TimeoutError):
+
+            logger.error("Connection error")
+            logger.warning("Sleep on 2 sec...")
             await asyncio.sleep(2)
+
+    logger.info("Succeed generate pre-requests")
+    logger.warning("Trying get group data")
+
     return sum(filter(None, await asyncio.gather(*tasks)), [])
