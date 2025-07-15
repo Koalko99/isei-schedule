@@ -426,8 +426,6 @@ async def create_data_bank():
 @dp.message(Command("start"))
 async def start(mess: types.Message):
 
-    logger.info(f"ID {mess.from_user.id} start talking")
-
     async with db.execute("""
                           SELECT 1
                           FROM students
@@ -570,8 +568,6 @@ async def page(callback: types.CallbackQuery):
 
     p = int(callback.data.split("_")[1])
 
-    logger.warning(f"ID {callback.from_user.id} open page {p+1}")
-
     keyboard = await get_teacher_keybord(p)
 
     await callback.message.edit_text("Выберите своё ФИО:",
@@ -603,6 +599,9 @@ async def delete(callback: types.CallbackQuery):
                                         )
     else:
         _, ans = callback.data.split("_")
+
+        await callback.message.delete()
+
         if ans == "yes":
 
             logger.error(f"ID {callback.from_user.id} delete account")
@@ -942,8 +941,6 @@ async def profile(mess: types.Message):
 async def today(mess: types.Message):
     teacher_key = await get_teacher_key(mess.from_user.id)
 
-    logger.info(f"ID {mess.from_user.id} looks at the schedule for today")
-
     week = (datetime.now() -
             timedelta(days=datetime.now().weekday())
             ).strftime("%d.%m.%Y")
@@ -1007,8 +1004,6 @@ async def today(mess: types.Message):
 @dp.message(F.text == "Завтра")
 async def next_day(mess: types.Message):
     teacher_key = await get_teacher_key(mess.from_user.id)
-
-    logger.info(f"ID {mess.from_user.id} looks at the schedule for next day")
 
     if datetime.now().weekday() != 6:
         week = (datetime.now() -
@@ -1082,9 +1077,6 @@ async def next_day(mess: types.Message):
 async def some_day(callback: types.CallbackQuery):
     await callback.answer()
     teacher_key = await get_teacher_key(callback.from_user.id)
-
-    logger.info(f"ID {callback.from_user.id} looks at "
-                f"the schedule for some day")
 
     week = ""
 
