@@ -114,7 +114,7 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
             logger.warning("Parsing teacher schedule...")
 
             if date not in html:
-                logger.error(f"Schedule for teacher on {date} in not exist")
+                logger.error(f"Schedule for teacher on {date} is not exist")
                 return []
 
             for i in range(0, len(tasks), shift):

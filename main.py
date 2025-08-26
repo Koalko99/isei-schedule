@@ -199,9 +199,9 @@ async def schedule(ID):
                                     str(res[-2]),
                                     res[-1])) as cursor:
             data = await cursor.fetchone()
-            data = loads((data)[0])
 
             if data:
+                data = loads((data)[0])
                 if datetime.now().weekday() <= 5:
                     if datetime.now().hour <= 17:
                         str_to_find = datetime.now().strftime("%d.%m.%Y")
@@ -260,7 +260,7 @@ async def schedule(ID):
                         """,
                         (teacher_key, week)
                     ) as cursor:
-            info = loads((await cursor.fetchone())[0])
+            info = await cursor.fetchone()
 
         async with db.execute("""
                               SELECT sended
@@ -269,9 +269,12 @@ async def schedule(ID):
                               """,
                               (teacher_key,)) as cursor:
 
-            last_sended = (await cursor.fetchone())[0]
+            last_sended = await cursor.fetchone()
+            if last_sended:
+                last_sended = last_sended[0]
 
         if info:
+            info = loads(info[0])
             if datetime.now().weekday() <= 5:
                 if datetime.now().hour <= 17:
                     str_to_find = datetime.now().strftime("%d.%m.%Y")
@@ -972,7 +975,8 @@ async def today(mess: types.Message):
                               """,
                               (*res[0:4], str(res[-2]), res[-1])) as cursor:
             data = await cursor.fetchone()
-            data = loads(data[0])
+            if data:
+                data = loads(data[0])
 
     else:
         async with db.execute("""
@@ -983,7 +987,8 @@ async def today(mess: types.Message):
                               """,
                               (teacher_key, week)) as cursor:
             data = await cursor.fetchone()
-            data = loads(data[0])
+            if data:
+                data = loads(data[0])
 
     str_to_find = datetime.now().strftime("%d.%m.%Y")
     text_to_send = ""
@@ -1044,7 +1049,8 @@ async def next_day(mess: types.Message):
                               (*res[0:4], str(res[-2]), res[-1])) as cursor:
 
             data = await cursor.fetchone()
-            data = loads(data[0])
+            if data:
+                data = loads(data[0])
     else:
         async with db.execute("""
                               SELECT data
@@ -1055,7 +1061,8 @@ async def next_day(mess: types.Message):
                               (teacher_key, week)) as cursor:
 
             data = await cursor.fetchone()
-            data = loads(data[0])
+            if data:
+                data = loads(data[0])
 
     str_to_find = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     text_to_send = ""
@@ -1123,7 +1130,9 @@ async def some_day(callback: types.CallbackQuery):
                               """,
                               res) as cursor:
 
-            data = loads((await cursor.fetchone())[0])
+            data = await cursor.fetchone()
+            if data:
+                data = loads(data[0])
 
     else:
 
@@ -1136,7 +1145,9 @@ async def some_day(callback: types.CallbackQuery):
                               (teacher_key, week)
                               ) as cursor:
 
-            data = loads((await cursor.fetchone())[0])
+            data = await cursor.fetchone()
+            if data:
+                data = loads(data[0])
 
     text_to_send = ""
     for d in data:
