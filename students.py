@@ -201,6 +201,10 @@ async def get_data(session: aiohttp.ClientSession,
             view_type = datetime.now() + timedelta(days=1)
         if datetime.now().hour >= 15 and datetime.now().weekday() != 5:
             view_type += timedelta(days=1)
+    elif isinstance(view_type, datetime):
+        if view_type.weekday() == 0:
+            view_type = "full"
+
 
     res = parse(html, group, subgroup, view_type)
 

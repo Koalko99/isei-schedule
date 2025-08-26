@@ -993,9 +993,10 @@ async def today(mess: types.Message):
     str_to_find = datetime.now().strftime("%d.%m.%Y")
     text_to_send = ""
 
-    for i in data:
-        if str_to_find in i:
-            text_to_send = i
+    if data:
+        for i in data:
+            if str_to_find in i:
+                text_to_send = i
 
     if not text_to_send:
         text_to_send = (f"Извините, но расписания на "
@@ -1067,9 +1068,10 @@ async def next_day(mess: types.Message):
     str_to_find = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     text_to_send = ""
 
-    for i in data:
-        if str_to_find in i:
-            text_to_send = i
+    if data:
+        for i in data:
+            if str_to_find in i:
+                text_to_send = i
 
     if not text_to_send:
         text_to_send = (f"Извините, но расписания на "
@@ -1276,7 +1278,7 @@ async def parse_data():
     counter = 0
     while not terminate.is_set():
         await create_data_bank()
-        while not terminate.is_set() and counter < 300:
+        while not terminate.is_set() and counter < 1200:
             await asyncio.sleep(1)
             counter += 1
         counter = 0
@@ -1298,7 +1300,7 @@ async def notify():
             tasks = [schedule(i) for i in sum(await cursor.fetchall(), ())]
         await asyncio.gather(*tasks)
         logger.info("End of sending")
-        while not terminate.is_set() and counter < 300:
+        while not terminate.is_set() and counter < 1200:
             await asyncio.sleep(1)
             counter += 1
         counter = 0
