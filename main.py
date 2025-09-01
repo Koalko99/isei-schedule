@@ -158,10 +158,7 @@ async def schedule(ID):
     text_to_send = ""
 
     if not teacher_key:
-        res = []
-
-        if len(res) < 6:
-            return
+        
         async with db.execute(
             """
             SELECT faculty,
@@ -176,6 +173,10 @@ async def schedule(ID):
                 (ID, )) as cursor:
 
             res = list(await cursor.fetchone())
+            
+            if len(res) < 5:
+                return
+            
             res.append(
                 (datetime.now() +
                  timedelta(days=7-datetime.now().weekday())
@@ -357,7 +358,7 @@ async def create_data_bank():
                     []
                     )
 
-        logger.warning("Get student schedule...")
+        logger.warning("Getting students schedule...")
 
         result = list(
                     filter(None,
