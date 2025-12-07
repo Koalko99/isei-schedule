@@ -59,9 +59,7 @@ async def _get_teacher_data(
                     ServerTimeoutError,
                     TimeoutError):
 
-                logger.error("Connection error")
-                logger.warning("Sleep on 3 sec...")
-                await asyncio.sleep(3)
+                await asyncio.sleep(1)
 
     data.update({"Show": "Показать", "__EVENTTARGET": ""})
     html = None
@@ -82,9 +80,7 @@ async def _get_teacher_data(
                 ServerTimeoutError,
                 TimeoutError):
 
-            logger.error("Connection error")
-            logger.warning("Sleep on 3 sec...")
-            await asyncio.sleep(3)
+            await asyncio.sleep(1)
 
 
 async def pre_data(session: aiohttp.ClientSession, date: str = None):
@@ -125,11 +121,10 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
                                         for r in tasks[i:i+shift]]):
 
                             res.append((teachers[r[0]], *r))
-                        await asyncio.sleep(3)
+                        logger.info(f"Parsing teacher data progress: {min((i+shift)*100/len(tasks), 100):.2f}%")
+                        await asyncio.sleep(5)
                         break
                     except Exception:
-                        logger.error("Connection error")
-                        logger.warning("Sleep on 3 sec...")
                         await asyncio.sleep(3)
             logger.info(f"Succeed parse teacher info on {date}")
             return res
@@ -139,8 +134,6 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
                 ServerTimeoutError,
                 TimeoutError):
 
-            logger.error("Connection error")
-            logger.warning("Sleep on 3 sec...")
             await asyncio.sleep(3)
 
 

@@ -31,6 +31,7 @@ bot = Bot(token=getenv("API_KEY"))
 dp = Dispatcher()
 
 terminate = threading.Event()
+lock = asyncio.Lock()
 
 COLORS = {
     'DEBUG':    '\033[36m',
@@ -180,13 +181,11 @@ async def schedule(ID):
             res.append(
                 (datetime.now() +
                  timedelta(days=7-datetime.now().weekday())
-                 if (datetime.now().hour >= 15
-                     and datetime.now().weekday() >= 5)
+                 if (datetime.now().weekday() >= 5)
                  else datetime.now() -
                     timedelta(days=datetime.now().weekday()
                               )).strftime("%d.%m.%Y"))
             res = tuple(filter(None, tuple(res)))
-            await asyncio.sleep(5)
 
         async with db.execute("""
                               SELECT data
@@ -204,7 +203,7 @@ async def schedule(ID):
             if data:
                 data = loads((data)[0])
                 if datetime.now().weekday() <= 5:
-                    if datetime.now().hour <= 17:
+                    if datetime.now().hour <= 15:
                         str_to_find = datetime.now().strftime("%d.%m.%Y")
                     else:
                         str_to_find = (datetime.now() +
@@ -220,6 +219,7 @@ async def schedule(ID):
                         text_to_send = None
                 else:
                     text_to_send = data[0]
+                    str_to_find = datetime.now().strftime("%d.%m.%Y")
 
         async with db.execute(
                     """
@@ -233,10 +233,13 @@ async def schedule(ID):
 
             logger.info(f"Send {ID} student data on {str_to_find}")
 
-            await bot.send_message(ID,
+            try:
+                await bot.send_message(ID,
                                    text_to_send,
                                    reply_markup=main_keyboard,
                                    parse_mode=ParseMode.HTML)
+            except:
+                pass
 
             await db.execute("""
                              UPDATE students SET `sended` = ? WHERE `id` = ?
@@ -246,7 +249,7 @@ async def schedule(ID):
     else:
         now = datetime.now()
 
-        if now.hour >= 15 and now.weekday() >= 5:
+        if now.weekday() >= 5:
             monday = now + timedelta(days=7 - now.weekday())
         else:
             monday = now - timedelta(days=now.weekday())
@@ -277,7 +280,7 @@ async def schedule(ID):
         if info:
             info = loads(info[0])
             if datetime.now().weekday() <= 5:
-                if datetime.now().hour <= 17:
+                if datetime.now().hour <= 15:
                     str_to_find = datetime.now().strftime("%d.%m.%Y")
                 else:
                     str_to_find = (datetime.now() +
@@ -293,6 +296,7 @@ async def schedule(ID):
                     text_to_send = None
             else:
                 text_to_send = info[0]
+                str_to_find = datetime.now().strftime("%d.%m.%Y")
 
             if "</code> нет" in text_to_send:
                 text_to_send = None
@@ -301,10 +305,14 @@ async def schedule(ID):
 
             logger.info(f"Send {ID} student data on {str_to_find}")
 
-            await bot.send_message(ID,
+            try:
+                await bot.send_message(ID,
                                    text_to_send,
                                    reply_markup=main_keyboard,
                                    parse_mode=ParseMode.HTML)
+            except:
+                pass
+
             await db.execute("""
                              UPDATE teachers
                              SET `sended` = ?
@@ -322,7 +330,8 @@ async def create_data_bank():
     logger.info("Create session")
 
     async with aiohttp.ClientSession(
-                            connector=aiohttp.TCPConnector(limit=300)
+                            connector=aiohttp.TCPConnector(limit=500),
+                            timeout=aiohttp.ClientTimeout(90)
                             ) as session:
 
         while True:
@@ -342,7 +351,7 @@ async def create_data_bank():
                     TimeoutError):
 
                 logger.error("Site is down")
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
 
         logger.warning("Create requests for parsing student schedule...")
 
@@ -360,14 +369,33 @@ async def create_data_bank():
 
         logger.warning("Getting students schedule...")
 
-        result = list(
+        shift = 20
+        result = []
+        for i in range(0, len(requests), shift):
+            _result = list(
                     filter(None,
                            await asyncio.gather(
-                               *[get_data(*r) for r in requests]
+                               *[get_data(*r) for r in requests[i:i+shift]]
                                 ))
                     )
 
+            result.extend(_result)
+            logger.info(f"Parsing students data progress: {min((i+shift)*100/len(requests), 100):.2f}%")
+            await asyncio.sleep(5)
+
         logger.info("Succeed collect student schedule")
+
+        await db.execute("""
+                         DELETE FROM s_info
+                         """)
+
+        await asyncio.gather(*[
+                        db.execute(
+                            """
+                            INSERT INTO s_info VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, row) for row in result]
+                            )
+        await db.commit()
 
         logger.warning("Getting teacher schedule...")
 
@@ -406,17 +434,9 @@ async def create_data_bank():
         logger.info("Update data in database")
 
         await db.execute("""
-                         DELETE FROM s_info
-                         """)
-        await db.execute("""
                          DELETE FROM t_info
                          """)
-        await asyncio.gather(*[
-                        db.execute(
-                            """
-                            INSERT INTO s_info VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, row) for row in result]
-                            )
+
         await asyncio.gather(*[
                         db.execute(
                             """
@@ -811,7 +831,7 @@ async def student(callback: types.CallbackQuery,
                             callback_data=CallbackFactory(
                                 action="student_4",
                                 value=i).pack()
-                            )] for i in sum(await cursor.fetchall(), ())]
+                            )] for i in sorted(sum(await cursor.fetchall(), ()))]
                         )
                     )
 
@@ -1299,9 +1319,12 @@ async def notify():
                               FROM teachers
                               """) as cursor:
             tasks = [schedule(i) for i in sum(await cursor.fetchall(), ())]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        except:
+            pass
         logger.info("End of sending")
-        while not terminate.is_set() and counter < 1200:
+        while not terminate.is_set() and counter < 300:
             await asyncio.sleep(1)
             counter += 1
         counter = 0
