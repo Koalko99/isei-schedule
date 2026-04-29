@@ -106,7 +106,7 @@ async def pre_data(session: aiohttp.ClientSession, date: str = None):
                 teachers.update({row["value"]:
                                  " ".join(row.text.split()[:3])})
                 tasks.append((session, row["value"], date))
-            shift = 30
+            shift = 40
             logger.warning("Parsing teacher schedule...")
 
             if date not in html:

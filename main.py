@@ -369,7 +369,7 @@ async def create_data_bank():
 
         logger.warning("Getting students schedule...")
 
-        shift = 20
+        shift = 40
         result = []
         for i in range(0, len(requests), shift):
             _result = list(
