@@ -48,10 +48,3 @@ API_KEY=your_token
 ```bash
 python main.py
 ```
-
-## 📬 Contact
-
-If you have any questions, suggestions or ideas for cooperation — <u>contact me</u>:
-
-- *Telegram:* [@Koalko101](https://t.me/Koalko101)
-- *Email:* *koalko99@gmail.com*
